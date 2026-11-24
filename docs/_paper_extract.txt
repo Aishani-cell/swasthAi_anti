@@ -1,0 +1,506 @@
+
+
+===== PAGE 1 =====
+SwasthAI: A Privacy-Preserving Neuro-Symbolic
+Multi-Agent AI Framework for Multimodal
+Diagnosis and Drug-Class Recommendation in
+Rural Healthpods
+Aishani Bhatnagar1[0009−0009−9596−6134], Bushra Ameen1[0009−0008−9209−1013],
+and Santosh Kumar2[0000−0003−2264−9014]
+1 Bhilai Institute of Technology, Durg, Chhattisgarh, India
+aishanibhatnagarab@gmail.com
+bushraameen731@gmail.com
+2 IIIT-Naya Raipur, Chhattisgarh, Indiasantosh@iiitnr.edu.in
+Abstract.RuralhealthpodsspecificallyunderIndia’sSmartVillageini-
+tiatives deploy use cases in smart healthcare, aligned with ITU-T Recom-
+mendation Y.4218. These consist of diagnostic hardware like vital-sign
+monitors, digital X-ray, portable CT, and blood-test machines. However,
+these operate without on-site clinicians to interpret and evaluate the data
+that is generated. We present SwasthAI, a privacy-preserving, neuro-
+symbolic,multi-agentclinicaldecisionsupportsystem(CDSS)thatcloses
+thisinterpretationgapwithoutlettingalargelanguagemodelreasonover
+raw, unverified evidence. A multimodal pipeline first normalizes mixed
+language symptom text, radiological images, respiratory acoustics, and
+laboratory values. A deterministic rule engine then converts this evi-
+dence into an immutable graph referenced to LOINC codes, with an
+emergency circuit breaker that can bypass the LLM entirely for detect-
+ing life-threatening patterns. Only certified evidence reaches a diagno-
+sis agent and a downstream drug-recommendation agent both of whose
+reasoning is based on retrieval augmented generation (RAG) Standard
+Indian and International clinical guidelines. These agents are all locally
+served to keep patient data on-site under low-connectivity conditions.
+In a 50-case 25-category clinical vignette evaluation, the safety circuit-
+breaker achieved 86.0% accuracy (macro-F1 72.55%) in gating cases,
+the diagnosis agent reached 78.0% accuracy (macro-F1 63.44%), and the
+drug-recommendation agent achieved 74.17% mean Jaccard similarity to
+gold-standard drug classes. We describe the system’s ingestion, symbolic
+verification, retrieval-grounded reasoning, and persistence layers, report
+these preliminary results, and target possible preliminary deployment at
+the Satnavari, Maharashtra (India’s first smart village).
+Keywords:Neuro-symbolic AI·Clinical decision support·Multi-agent
+systems·Privacy-preserving healthcare AI·Emergency circuit breaker
+·Rural telemedicine·Multimodal reasoning.
+
+===== PAGE 2 =====
+2 Bhatnagar & Ameen et al.
+1 Introduction
+1.1 Motivation and Challenges
+Motivation-Rural and remote healthcare (in India’s Smart Village Initiatives)
+is limited less by diagnostic hardware than by a shortage of specialists to in-
+terpret the results. This gap became concrete during a visit to Satnavari, Ma-
+harashtra—India’s first smart village—where healthpods built under the ITU-T
+Y.4218 smart-village healthcare framework house automated vital-sign moni-
+tors, digital X-ray units, portable CT scanners, and blood-test machines, yet
+operate without an on-site doctor [3]. Front-line workers (ASHAs, Anganwadi
+Workers, ANMs, Telemedicine Technicians) can capture vitals and imaging, but
+have no physician to interpret them and no prior patient record for context [9].
+The ITU-T Y.4218-aligned hardware thus solves dataacquisition, not datain-
+terpretation—motivating SwasthAI as a system to close this interpretation gap
+while preserving patient privacy and maintaining longitudinal patient history.
+Challenges—This goal is complicated by three open problems. First, large lan-
+guage models reason fluently over clinical text but hallucinate findings and mis-
+read numeric values, offering no guarantee of evidence-grounded diagnosis. Sec-
+ond, symbolic rule-based systems avoid hallucination but cannot handle unstruc-
+tured, multilingual, multimodal input without exhaustive manual rule author-
+ing—leaving the fusion of LLM reasoning with deterministic auditability largely
+unresolved. Third, cloud-dependent architectures conflict with data-protection
+regulations like HIPAA and GDPR, since they transmit patient data off-site and
+cannot function without reliable internet connection.[4].
+1.2 Proposed Model and Contributions
+Our model employs a four-stage evidence pipeline that standardizes heteroge-
+neous inputs (multilingual symptoms, imaging, lung acoustics, lab panels) via
+specialized agents into a unified, verified format and then fuses them with SQL-
+retrieved patient records. It validates the result through a deterministic neuro-
+symbolic safety layer that enforces physiological bounds, LOINC-mapped lab
+resolution, and an emergency circuit breaker that bypasses generative reasoning
+when needed, thus delivering four core contributions:
+1.F our Stage Evidence Pipeline:normalizing multimodal clinical data be-
+fore LLM inference,
+2.Neuro-Symbolic Safety Layer:constraining generative outputs via de-
+terministic rules and threshold alerts to prevent hallucinations,
+3.Modular Multi-Agent Implementation:orchestrating symptom-NLP,
+vision, sound, diagnosis, and drug agents in one pipeline, and
+4.Longitudinal Evidence F etching:that preserves and contextually re-
+trieves normalized patient history for new consultations.
+
+===== PAGE 3 =====
+SwasthAI: Neuro-Symbolic AI for Rural Healthpods 3
+2 Related Work and Vulnerabilities Addressed by
+SwasthAI
+Clinical AI has advanced along four largely fragmented fronts: multi-agent rea-
+soning [9], safety guardrails [6], multimodal perception [1], and RAG. [1] Multi-
+agent frameworks improve structured decision support and mitigate LLM hallu-
+cinations [9,6], but rely on soft consistency checks rather than hard verification.
+SwasthAI,ontheotherhand,enforcesdeterministicgatingofgenerativediagnos-
+tic hypotheses against a clinical evidence graph and rule engine. Separately, local
+inference safeguards privacy [5,8,10], while multimodal models interpret medical
+imaging [1] and respiratory audio [10], still these capabilities remain isolated as
+discrete modules rather than a unified evidence stream. SwasthAI consolidates
+symptom, imaging, acoustic, laboratory, and vital signals within a single local,
+RAG-grounded pipeline [1]. At scale, deployments such as India’s eSanjeevani
+demonstrate the real-world utility of AI-CDSS [7], but edge-oriented architec-
+tures combining multimodal extraction, deterministic validation, local RAG, and
+longitudinal EHR persistence remain underexplored. This is a gap SwasthAI di-
+rectly addresses as a privacy-preserving solution for resource-constrained health-
+pods [2].
+3 Methodology
+3.1 System Overview
+SwasthAI (shown in Fig. 1) implements a modular, privacy-preserving pipeline
+comprisingmultimodalevidenceextraction,deterministicverification,knowledge-
+grounded reasoning, and electronic health record (EHR) persistence.
+Fig.1: System architecture of SwasthAI.
+
+===== PAGE 4 =====
+4 Bhatnagar & Ameen et al.
+Patient identifiers are scrubbed (Section 3.3) and dedicated agents standard-
+ize patient inputs(Section 3.4). Normalized evidence is evaluated by an LLM-
+independentdeterministicruleengine(Section3.6).Anemergencycircuitbreaker
+halts the pipeline when critical physiological patterns are detected, prevent-
+ing unsafe downstream reasoning. Verified evidence is supplied to local diag-
+nostic(Section 3.8) and pharmacological agents(Section 3.8). Both these agents
+perform grounded reasoning through clinical retrieval rather than hallucina-
+tion(Section 3.7). All encounters are securely stored in the integrated EHR re-
+lational database.
+3.2 Multimodal Data Acquisition and Ingestion
+SwasthAI ingests vitals, multilingual symptoms, radiological images, respiratory
+audio, and laboratory reports. Patient authentication relies on hashed creden-
+tials. Vitals are range-constrained and a rule-based triage layer delivers imme-
+diate threshold feedback without LLM involvement.
+Optional radiological imaging inputs (PNG/JPG/JPEG or DICOM) are pro-
+cessed locally via Qwen3-VL:32B-Instruct, and respiratory recordings are classi-
+fied using OPERA-CT. Laboratory reports, including PDFs and scanned docu-
+ments, are parsed to extract structured test names, values, units, and reference
+ranges. Missing modalities are explicitly logged rather than silently dropped. Op-
+erators can review extracted values before transactional persistence to SQLite,
+after which verified encounter data enters the downstream reasoning pipeline.
+3.3 Privacy-Preserving Processing and Persistence
+PrivacypreservationprecedesanyLLMinteraction.Identifyingattributes(name,
+phone, DOB, address) pass through a dedicated scrubbing stage so that LLM
+components see only the coarse demographics (age, sex, pregnancy status).All
+LLM inference runs on locally hosted models within the deployment site rather
+than external cloud APIs, adding a data-containment boundary against third-
+party transmission and enabling operation under limited connectivity. These
+measures are architecturally aligned with HIPAA and GDPR, and their data
+minimization principles. Persistence, authentication, and longitudinal tracking
+arehandledbyanormalizedSQLitelayerofseventables(patients,medical_history,
+consultations,vitals,lab_results,imaging_scans,extracted_symptoms)
+with active foreign-key constraints and cascading deletions; credentials and gov-
+ernment identifiers (e.g., Phone no. hash) are stored only as one-way SHA-256
+hashes.
+3.4 Multimodal Evidence Extraction
+Each modality is routed to a dedicated extraction agent that converts raw inputs
+into normalized, structured evidence before deterministic validation and clinical
+reasoning.
+
+===== PAGE 5 =====
+SwasthAI: Neuro-Symbolic AI for Rural Healthpods 5
+Natural Language ProcessingSwasthAI extracts bilingual symptoms (En-
+glish/Hindi/Hinglish) via a hybrid pipeline. The primary offline layer uses exact
+bilingual phrase matching over a curated lexiconL= (ck, Pk)∗k= 1 K, where
+match(ˆt) =c k | ∃, p∈Pk,;p⊆ ˆtprioritizes longer phrases. Unmatched tokens
+undergo fuzzy matching using the Ratcliff–Obershelp similarity ratio:
+sim(g, p) =2·M(g, p)|g|+|p| ≥τ fuzzy (0.90),(1)
+whereτ fuzzy = 0.90is a fixed conservative heuristic threshold used to limit
+false fuzzy matches. A local lookahead windowW(p) =ˆt[i:i+|p|+δ](δ= 20
+characters) checks for negation cuesN, withδfixed as a local context window for
+capturing nearby negation cues. A localqwen2.5:14bmodel fallback is triggered
+only if lexicon coverage is weak:
+use_LM =true⇐ ⇒ |Rlex|< η(η= 1)∧connectivity available,(2)
+i.e. the fallback activates only when the lexicon extracts no symptoms at all,
+reserving generative extraction for lexicon failure rather than routine augmenta-
+tion, consistent with the design goal in Section 1.1 of minimizing LLM involve-
+ment wherever deterministic coverage suffices. This yields the final structured
+setR final =R llm (if well-formed) elseRlex, compressed into a verified symptom
+summary for downstream agents.
+Laboratory Report ExtractionText-based lab PDFs are parsed directly
+using pdfplumber, while image-based or text-deficient reports use PIL, Pad-
+dleOCR and pypdfium2. A constrained localqwen2.5:1.5bextractor identifies
+test name, value, unit, reference range, and printed qualifiers, backed by a de-
+terministic unit-aware parser as fallback and limited abbreviation normalization
+to reduce ambiguity.
+Vision Agent for Radiological ImagingRadiological inputs are analyzed
+viametadataverificationandtargeted,body-part-specificvisualquestionsrather
+than unconstrained report generation. DICOM modality, body part, and plane
+are verified from metadata (otherwise flagged unverified); each response requires
+an anatomical citation and confidence score, with programmatic auditing flag-
+ging unsupported normality claims, low-confidence findings, and metadata dis-
+agreements for human review. Outputs are treated as AI-generated triage aids,
+not definitive diagnoses.
+Respiratory Acoustic AgentRespiratory recordings are standardized and
+processed by the frozen OPERA-CT model into a 768-dimensional acoustic em-
+bedding, serving as complementary evidence for downstream multimodal rea-
+soning rather than an independent diagnostic output; extraction failures are
+reported without halting the pipeline.
+
+===== PAGE 6 =====
+6 Bhatnagar & Ameen et al.
+3.5 Laboratory V alue Resolution
+Extracted laboratory data undergoes deterministic triplet verification—analyte
+identity, unit consistency, and physiological plausibility, all prior to rule evalu-
+ation. A curated reference database maps heterogeneous clinical aliases and re-
+gionalreportingvariantstocanonicalnames,LOINCcodes,andsurvivalbounds.
+Values failing validation are isolated rather than guessed to prevent error prop-
+agation. Furthermore, a localqwen2.5:7bmodel provides advisory identity sug-
+gestions for unrecognized tests without yielding generative control over physio-
+logical thresholds.
+3.6 Deterministic Symbolic Rule Engine
+Vitals and resolved laboratory values are evaluated by a non-LLM rule engine us-
+ing explicit, demographic-conditioned thresholds to produce structured flags and
+a canonical evidence graph. Representative rules manage blood-pressure staging,
+age-specific pulse bounds, and laboratory markers, while surfacing missing core
+tests to prevent silent omissions. Critical anomalies trigger an emergency circuit
+breaker to bypass generative reasoning, ensuring fully reproducible and auditable
+safety gating.
+status(SBP, DBP) =
+
+
+
+NormalSBP <120∧DBP <80
+Elevated120≤SBP <130∧DBP <80
+Hypertensive crisisSBP≥180∨DBP≥120
+(3)
+3.7 Retrieval-Augmented Knowledge Grounding
+SwasthAI grounds diagnosis via RAG over a locally maintained knowledge base
+of Indian clinical and imaging guidelines, reducing reliance on parametric knowl-
+edge. Guideline PDFs are layout-aware parsed (tables preserved structurally), re-
+cursively chunked, and annotated with source/page metadata before embedding
+withnomic-embed-textinto ChromaDB (cosine similarity).
+sim(q, ci) = q·c i∥q∥∥ci∥ ,retrievec i iff1−sim(q, c i)≤τ(4)
+At inference, the symptom summary retrieves the top-3 chunks under a
+relevance-distance threshold; if unmet, retrieval is explicitly flagged unavailable
+rather than backfilled with generated content. Valid results are passed to the di-
+agnosis agent as source-traceable evidence alongside symbolic, symptom, imag-
+ing, and acoustic findings.
+3.8 LLM Reasoning Agents
+SwasthAI splits generative reasoning into two purpose limited local models
+rather than one general-purpose LLM like-
+
+===== PAGE 7 =====
+SwasthAI: Neuro-Symbolic AI for Rural Healthpods 7
+Diagnosis Agent.Differentialdiagnosisisperformedusingqwen2.5:14bmodel
+attemperature=0.0. The agent receives only the structured EvidenceGraph
+text, symptom summary, radiology findings, and lung-sound findings and never
+raw unverified inputs. It is explicitly prompted to output solely a fixed Pri-
+mary/DifferentialDiagnosis(andconditionalLaboratoryFindings)format,with-
+out restating evidence and explaining its reasoning. This constrained prompting
+is consistent with improving clinical safety [6], and follows the multi-agent de-
+composition principle [9].
+Drug Recommendation Agent.Drug agent uses theqwen2.5:14bmodel at
+temperature=0.0, to convert an already-validated diagnosis into generic-only,
+contraindication-aware guidance. The agent is prompted to emit only generic
+drug classes with mandatory physician-review language, aligned with RAG sys-
+tems [1] while avoiding brand names. SwasthAI omits a post-hoc validator, as
+diagnoses are deterministically gated before drug recommendation, reducing in-
+ference latency while supporting scalable deployment in clinical decision support
+systems [7].
+4 Results and Discussion
+4.1 Experimental Setup
+The evaluation was performed on a set of clinical vignettes covering 25 distinct
+diagnosticcategories(twocases per category)i.e N= 50. Each casecontained pa-
+tient demographics, vital signs, and laboratory findings. Only the patient inputs
+were passed to the pipeline and Gold labels were withheld from the pipeline
+and used exclusively for post-hoc scoring. The emergency circuit breaker and
+deterministic rule engine,Safety Status agent, gave two outputs-Approved(non
+critical case) orRejected(critical case that should bypass LLMs). All agents- the
+lab resolver agent, the diagnosis agent usingqwen2.5:14b, the drug recommen-
+dation agent and symptom NLP agent usingqwen2.5:14b, except Safety Status
+Agent, were run locally via Ollama(temperature=0.0) ontwo NVIDIA GeForce
+GTX 1080 Ti GPUs (11 GB VRAM each).
+4.2 Dataset Description
+Table 1 summarizes the composition of the evaluation set across diagnostic cat-
+egories and expected safety status.
+
+===== PAGE 8 =====
+8 Bhatnagar & Ameen et al.
+Table 1: Composition of the clinical vignette evaluation set.
+Diagnostic Category Cases Expected Status
+Cardiac (STEMI, Heart Failure, Pericarditis) 6 Mixed
+Infectious (Appendicitis, Pneumonia, UTI,
+Pyelonephritis, Sepsis, Septic Shock, Meningi-
+tis, Malaria, Dengue)
+18 Mixed
+Endocrine/Metabolic (DKA, Thyroid Disor-
+ders, AKI)
+8 Approved
+Respiratory (Asthma, COPD, Pulmonary Em-
+bolism)
+6 Approved
+Other (Hypertension, Hypertensive Emergency,
+Stroke, Acute Pancreatitis, Cholecystitis, Gas-
+troenteritis)
+12 Mixed
+T otal 50 42 Approved / 8 Rejected
+4.3 Model Performance Metrics
+The diagnosis agent and the safety status agent are evaluated using:accuracy,
+macro-averaged precision, macro-averaged recall, and macro-averaged F1-score.
+For the drug recommendation agent, themean Jaccard similaritybetween the
+predicted and expected drug-class sets was used, reflecting its multi label nature.
+Precisionmacro = 1K
+KX
+k=1
+T Pk
+T Pk +F Pk
+,Recall macro = 1K
+KX
+k=1
+T Pk
+T Pk +F Nk
+(5)
+F1macro = 2·P macro ·R macroPmacro +R macro , J(A, B) = |A∩B||A∪B| (6)
+4.4 Performance Analysis
+Table 2 reports the aggregate performance of the diagnosis agent and the safety
+status agent.
+Table 2: Diagnosis agent and safety status agent performance (%).
+Metric Diagnosis AgentSafety Status Agent
+Accuracy 78.00% 86.00%
+Precision (macro)64.52% 73.92%
+Recall (macro) 62.90% 71.43%
+F1-score (macro) 63.44% 72.55%
+ThedrugrecommendationagentachievedameanJaccardsimilarityof74.17%
+across all cases, reflecting the degree of overlap between predicted and gold-
+standard drug classes. Figure 2 shows accuracy of diagnosis agent per each con-
+dition(2 cases in one condition).
+
+===== PAGE 9 =====
+SwasthAI: Neuro-Symbolic AI for Rural Healthpods 9
+Fig.2: Per-diagnosis accuracy of the diagnosis agent across the 25 evaluated
+conditions(2 cases in each condition)
+4.5 Multimodal-Based Performance
+While the pipeline architecture supports image-based and lung-sound-based di-
+agnostic input in addition to text, the present evaluation focuses on the text-
+based pathway. We illustrate the multimodal capability qualitatively in Table 2,
+which shows a table generated from evaluating lab resolver module, symptom nlp
+agent, diagnosis agent, Safety status agent (combined emergency circuit breaker
+and deterministic rules engine) and defer quantitative multimodal evaluation to
+future work.
+4.6 Discussion
+The diagnosis agent predicted 39 out of 50 cases correctly but it was unable
+to diagnose some conditions (STEMI, UTI, DKA, COPD exacerbation, AKI,
+and one of two dengue cases as shown in Fig 2). These errors likely stem from
+symptoms overlapping, abnormal lab values and vital sign patterns that make
+these conditions difficult to differentiate from others.
+The Safety status agent demonstrated an accuracy of 86 percent. It correctly
+classified 39 out of 42 non-critical cases as APPROVED. While 3 non-critical
+were wrongly classified as emergency cases (false positives). Among the 8 cases
+requiring emergency escalation, 4 were correctly identified and 4 were not (false
+negatives). This is shown in Figure 3b. This shows that while the Safety State
+agent was generally effective for most cases, it had lower sensitivity for detecting
+all critical cases.
+
+===== PAGE 10 =====
+10 Bhatnagar & Ameen et al.
+(a) No. of cases per jaccard score range
+ (b) Confusion matrix for the safety esca-
+lation status agent (APPROVED vs. RE-
+JECTED).
+Fig.3: Drug recommendation and Safety Status agent performance.
+The drug agent achieved a mean Jaccard similarity of 74.17 percent. This
+indicates that the generated therapeutic recommendations made by the drug
+agent were sometimes incomplete or missed additional drug classes needed.Con-
+sequently, all these component requires further refinement before it can be con-
+sidered reliable for clinical decision support.Fig. 3(a) shows the number of cases
+per Jaccard scores ranges, and Fig.3(b) shows the confusion metricsfor the safety
+status agent, distinguishing correctly and incorrectly escalated cases.
+5 Comparative Analysis
+Table3situatestheproposedsystemagainsttworelatedbutdiferenttask-format
+wise systems: MedAgents [9], evaluated on closed-set medical question answer-
+ing, and CareGuardAI [6], which evaluates safety for patient-facing LLM re-
+sponses.The table 3 reports each system’s own metric alongside its task format
+rather than implying a ranking.The proposed system instead evaluates whether
+a diagnosis, safety-escalation decision, and drug-class recommendation gener-
+atedfrom structured vitals and labsmatch a held-out gold label, scored by exact
+string/set match.
+
+===== PAGE 11 =====
+SwasthAI: Neuro-Symbolic AI for Rural Healthpods 11
+Table 3: Comparison with two related multi-agent medical LLM systems. Task
+formats differ substantially across all three rows; metrics are reported as pub-
+lished and are not directly comparable in magnitude.
+Ref Dataset Method Reported metric Task format
+[9] MedQA, MedM-
+CQA, Pub-
+MedQA, MMLU
+(medical subsets)
+Multi-agent
+collaborative rea-
+soning (analysis,
+reportsummariza-
+tion, consensus)
+over GPT-4 /
+GPT-3.5
+Avg. accuracy 86.7%
+(GPT-4, zero-shot);
+72.1% (GPT-3.5,
+zero-shot)
+Closed-set multiple-
+choice QA (4–5 op-
+tions per question)
+[6] PatientSafeBench
+(466), MedSafe-
+tyBench (450),
+MedHallu (200)
+– adversarial
+patient-facing
+query sets
+Multi-agent
+triage controller
+(Phi-3.5) +
+generator (GPT-
+4o-mini) + par-
+allel SRA/HRA
+risk evaluators
+(LLaMA-3.1-8B)
+with iterative
+refinement
+Deployable rate
+(SRA≤2 & HRA≤2):
+98.7% (PSB), 99.8%
+(MSB), 99.5% (Med-
+Hallu); safety vio-
+lation rate reduced
+19.7%→2.8% vs.
+baseline; HRA AU-
+ROC 77.00%, F1
+78.51%
+Post-hoc binary
+safety/hallucination
+gating of an already-
+generated open-
+ended patient
+response
+Proposed 50-case clinical
+vignette set (25
+diagnoses)
+LLM-based multi-
+agent pipeline
+(diagnosis, safety-
+escalation,
+and drug-
+recommendation
+agents)
+Diagnosis: Acc.
+78.00%, P 64.52%, R
+62.90%, F1 63.44%.
+Safety status: Acc.
+86.00%, P 73.92%, R
+71.43%, F1 72.55%
+Diagnosis gener-
+ation and rule-
+triggered safety
+escalation from
+structured vi-
+tals/labs, scored
+against gold diagno-
+sis/status labels
+Another thing worth noting is that the proposed system’s 78.00% diagnosis
+accuracy is measured by exact string matching against a gold label. Thus there
+were a small number of cases where the diagnosis agent produced a clinically
+equivalent but differently-phrased diagnosis (e.g. abbreviation vs. full name)
+which were scored as incorrect under this metric. Due to time constraints, the
+matching logic could not be extended to account for semantic equivalence as
+well.
+6 Future Work
+Future work-Future work includes integration of respllm, for audio/lung sound
+diagnosis. Real time fine tuning as per Satnavri’s data. It also includes further
+improving accuracy of all agents involved and putting further effort for down-
+stream analysis.
+
+===== PAGE 12 =====
+12 Bhatnagar & Ameen et al.
+References
+1. Kara, S., Karcioglu, A.A.: Llms, rag, and agentic workflow in clinical decision
+support systems: bibliometric and systematic analysis. Neural Computing and Ap-
+plications38(12), 509 (2026)
+2. Karamanlıoğlu, A., Demirel, B., Tural, O., Doğan, O.T., Alpaslan, F.N.: Privacy-
+preserving clinical decision support for emergency triage using llms: System archi-
+tecture and real-world evaluation. Applied Sciences15(15), 8412 (2025)
+3. Kumar, S., Bhagat, V., Sahu, P., Chaube, M.K., Behera, A.K., Guizani, M., Grav-
+ina, R., Di Dio, M., Fortino, G., Curry, E., et al.: A novel multimodal framework for
+early diagnosis and classification of copd based on ct scan images and multivariate
+pulmonary respiratory diseases. Computer Methods and Programs in Biomedicine
+243, 107911 (2024)
+4. Kumar, S., Shvetsov, A.V., Alsamhi, S.H.: Fuzzyguard: A novel multimodal neuro-
+fuzzy framework for copd early diagnosis. IEEE Internet of Things Journal12(8),
+9627–9637 (2024)
+5. Li, C., Meng, Y., Dong, L., Ma, D., Wang, C., Du, D.: Ethical privacy framework
+for large language models in smart healthcare: A comprehensive evaluation and
+protection approach. IEEE Journal of Biomedical and Health Informatics pp. 1–14
+(2025). https://doi.org/10.1109/JBHI.2025.3576579
+6. Nasarian, E., Neog, A., Tsui, K.L., HosseiniChimeh, N.: Careguardai: Context-
+aware multi-agent guardrails for clinical safety & hallucination mitigation in
+patient-facing llms. arXiv preprint arXiv:2604.26959 (2026)
+7. Panda, P.K., Dutta, T., Chander, A., Kalikar, S., Thakur, S., Sood, S., Singh, S.,
+Singh, G., Bisht, D., Lal, K., et al.: Ai clinical decision support system (cdss) for
+teleconsultations in esanjeevani, india telemedicine service: A prospective imple-
+mentation study. medRxiv pp. 2025–11 (2025)
+8. Rao, V.M., Hla, M., Moor, M., Adithan, S., Kwak, S., Topol, E.J., Rajpurkar,
+P.: Multimodal generative ai for medical image interpretation. Nature639(8056),
+888–896 (2025)
+9. Tang, X., Zou, A., Zhang, Z., Li, Z., Zhao, Y., Zhang, X., Cohan, A., Gerstein, M.:
+Medagents:Largelanguagemodelsascollaboratorsforzero-shotmedicalreasoning.
+In: Findings of the Association for Computational Linguistics: ACL 2024. pp. 599–
+621 (2024)
+10. Zhang, Y., Xia, T., Han, J., Wu, Y.Y., Rizos, G., Liu, Y., Mosuily, M., Chauhan,
+J., Mascolo, C.: Towards open respiratory acoustic foundation models: Pretraining
+andbenchmarking.AdvancesinNeuralInformationProcessingSystems37,27024–
+27055 (2024)

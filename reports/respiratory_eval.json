@@ -1,0 +1,80 @@
+{
+  "status": "EVALUATION_SUCCESS",
+  "num_test_cycles": 16,
+  "overall_accuracy": 0.25,
+  "macro_f1": 0.1538,
+  "confusion_matrix": [
+    [
+      0,
+      1,
+      0,
+      3
+    ],
+    [
+      0,
+      4,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      4
+    ],
+    [
+      0,
+      4,
+      0,
+      0
+    ]
+  ],
+  "classes": [
+    "normal",
+    "crackle",
+    "wheeze",
+    "both"
+  ],
+  "per_class_metrics": {
+    "normal": {
+      "sensitivity": 0.0,
+      "specificity": 1.0,
+      "precision": 0.0,
+      "f1_score": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 4,
+      "tn": 12
+    },
+    "crackle": {
+      "sensitivity": 1.0,
+      "specificity": 0.5833,
+      "precision": 0.4444,
+      "f1_score": 0.6154,
+      "tp": 4,
+      "fp": 5,
+      "fn": 0,
+      "tn": 7
+    },
+    "wheeze": {
+      "sensitivity": 0.0,
+      "specificity": 1.0,
+      "precision": 0.0,
+      "f1_score": 0.0,
+      "tp": 0,
+      "fp": 0,
+      "fn": 4,
+      "tn": 12
+    },
+    "both": {
+      "sensitivity": 0.0,
+      "specificity": 0.4167,
+      "precision": 0.0,
+      "f1_score": 0.0,
+      "tp": 0,
+      "fp": 7,
+      "fn": 4,
+      "tn": 5
+    }
+  }
+}

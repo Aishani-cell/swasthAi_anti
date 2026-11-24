@@ -1,0 +1,55 @@
+# SwasthAI — Python 3.12 Verified Requirements
+# Hardware-Optimized, Privacy-Preserving, Neuro-Symbolic, Multimodal CDSS
+# Target: Intel i5-14450HX, 24GB RAM, RTX 3050 (6GB VRAM), Python 3.12 (CPython 3.12.10)
+
+# === Backend API ===
+fastapi==0.162.2
+starlette==1.10.0
+uvicorn==0.54.0
+python-multipart==0.0.33
+python-dotenv==1.2.4
+
+# === Data Validation & Schemas ===
+pydantic==2.14.3
+pydantic-core==2.50.4
+annotated-types==0.8.0
+typing-extensions==4.16.0
+
+# === Frontend & Presentation ===
+streamlit==1.67.0
+altair==6.3.0
+pydeck==0.9.3
+tabulate==0.10.0
+watchdog==7.1.0
+
+# === Numerical & Scientific Computation ===
+numpy==2.2.6
+pandas==2.2.3
+pyarrow==26.0.1
+python-dateutil==4.0.0
+tzdata==2026.6
+
+# === HTTP & Networking ===
+requests==2.34.2
+urllib3==2.8.0
+certifi==2026.10.23
+idna==3.20
+charset-normalizer==3.5.2
+websockets==17.4
+
+# === Cryptography & Security ===
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12
+
+# === Image & Document Handling ===
+pillow==13.0.0
+
+# === Testing & Quality Assurance ===
+pytest==9.2.0
+pluggy==1.7.0
+iniconfig==2.3.1
+
+# === Optional / Model Note ===
+# PyTorch: Offline NumPy-based stub provided in torch/ for sandboxed Windows environments.
+# To use real GPU PyTorch, install torch==2.15.0 or compatible CUDA wheel when policy permits.

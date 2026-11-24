@@ -1,0 +1,5 @@
+# Respiratory training and inference.
+# The PyPI wheel for CPython 3.14 is torch 2.15.0+cpu (about 127 MB).
+# It does not include CUDA. If a later CUDA build reports torch.cuda.is_available(),
+# RespLLM uses the GPU without code changes.
+torch==2.15.0

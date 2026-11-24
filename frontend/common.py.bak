@@ -1,0 +1,98 @@
+"""
+SwasthAI Frontend Shared Utilities & Navigation
+Provides authentication session handling, role badges, styling, and database helpers.
+"""
+import sys
+import os
+import sqlite3
+from pathlib import Path
+import streamlit as st
+
+# Ensure repository root is on sys.path
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from backend.app.core.config import settings
+from backend.app.db.session import get_db_connection
+
+
+def init_session():
+    """Initializes user session state. In patient-only mode, unauthenticated users must sign in."""
+    if "patient_user" not in st.session_state:
+        st.session_state["patient_user"] = None
+    if "user" not in st.session_state:
+        st.session_state["user"] = None
+    if "selected_patient_id" not in st.session_state:
+        st.session_state["selected_patient_id"] = None
+    if "selected_encounter_id" not in st.session_state:
+        st.session_state["selected_encounter_id"] = None
+
+def get_current_patient():
+    """Returns the authenticated patient dict or None."""
+    init_session()
+    return st.session_state.get("patient_user")
+
+def require_patient_auth():
+    """Enforces that a patient is signed in. Redirects to login page if not."""
+    init_session()
+    patient = st.session_state.get("patient_user")
+    if not patient:
+        st.warning("🔒 Please sign in to access your Satnavari Healthpod Patient Portal.")
+        st.info("Demo Patient Account: Phone **9876543210**, Password **Patient@2026**")
+        if st.button("👉 Proceed to Patient Sign In", type="primary"):
+            st.switch_page("pages/01_Login.py")
+        st.stop()
+    return patient
+
+
+def render_header(title: str, subtitle: str = None):
+    """Renders consistent clinical header across all pages."""
+    init_session()
+    user = st.session_state.get("user", {})
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.title(f"🏥 {title}")
+        if subtitle:
+            st.caption(subtitle)
+    with col2:
+        role = user.get("role", "guest").upper()
+        name = user.get("full_name", "Guest")
+        role_colors = {
+            "CLINICIAN": "🟢",
+            "ADMIN": "🟣",
+            "ASHA": "🟠",
+            "ANM": "🔵",
+            "TECHNICIAN": "🟡"
+        }
+        badge = role_colors.get(role, "⚪")
+        st.markdown(
+            f"""
+            <div style="text-align: right; padding: 10px; background-color: rgba(28, 131, 225, 0.1); border-radius: 8px;">
+                <span style="font-size: 0.85em; color: gray;">Satnavari Healthpod</span><br/>
+                <b>{badge} {name}</b><br/>
+                <span style="font-size: 0.75em; text-transform: uppercase; background: #e0e0e0; padding: 2px 6px; border-radius: 4px; color: black;">{role}</span>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+    st.divider()
+
+
+def require_role(allowed_roles: list):
+    """Guards clinical pages by verifying user role."""
+    init_session()
+    user = st.session_state.get("user")
+    if not user or user.get("role") not in allowed_roles:
+        st.error(f"⚠️ Access Restricted: This workflow requires one of the following roles: {', '.join(allowed_roles)}.")
+        st.info(f"Current role: {user.get('role', 'None')}. Please switch roles in the Login / Switch User page.")
+        st.stop()
+
+
+def render_circuit_breaker_badge(is_halted: bool, status: str = None):
+    """Renders visual circuit-breaker status badge."""
+    if is_halted or status == "Rejected":
+        st.error("🚨 **CIRCUIT BREAKER HALTED (STATUS: REJECTED)** — Life-threatening physiological anomaly detected. Generative models bypassed. Immediate emergency referral required.")
+    else:
+        st.success("✅ **CIRCUIT BREAKER APPROVED** — Physiological safety rules passed. Safe for CDSS assistance.")

@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SwasthAI Synthetic Encounter Schema",
+  "type": "object",
+  "required": [
+    "case_id",
+    "synthetic_patient_id",
+    "encounter_id",
+    "age",
+    "sex",
+    "symptoms_original",
+    "vital_signs",
+    "gold_diagnosis",
+    "gold_safety_status",
+    "data_provenance",
+    "split"
+  ],
+  "properties": {
+    "case_id": { "type": "string" },
+    "synthetic_patient_id": { "type": "string" },
+    "encounter_id": { "type": "string" },
+    "age": { "type": ["integer", "null"], "minimum": 0, "maximum": 125 },
+    "sex": { "type": "string", "enum": ["MALE", "FEMALE", "OTHER", "UNKNOWN"] },
+    "pregnancy_status": { "type": "boolean" },
+    "symptoms_original": { "type": "string" },
+    "symptom_language": { "type": "string", "enum": ["en", "hi", "hinglish"] },
+    "symptoms_normalized": { "type": "array", "items": { "type": "string" } },
+    "negated_symptoms": { "type": "array", "items": { "type": "string" } },
+    "vital_signs": {
+      "type": "object",
+      "properties": {
+        "systolic_bp": { "type": ["number", "null"] },
+        "diastolic_bp": { "type": ["number", "null"] },
+        "heart_rate": { "type": ["number", "null"] },
+        "respiratory_rate": { "type": ["number", "null"] },
+        "temperature_c": { "type": ["number", "null"] },
+        "spo2": { "type": ["number", "null"] },
+        "blood_glucose_mg_dl": { "type": ["number", "null"] }
+      }
+    },
+    "laboratory_test_name": { "type": ["string", "null"] },
+    "laboratory_value": { "type": ["number", "string", "null"] },
+    "laboratory_unit": { "type": ["string", "null"] },
+    "loinc_code": { "type": ["string", "null"] },
+    "laboratory_validation_status": { "type": "string" },
+    "missing_modalities": { "type": "array", "items": { "type": "string" } },
+    "safety_status": { "type": "string", "enum": ["Approved", "Rejected"] },
+    "emergency_escalation_status": { "type": "boolean" },
+    "predicted_primary_diagnosis": { "type": "string" },
+    "predicted_drug_classes": { "type": "array", "items": { "type": "string" } },
+    "gold_diagnosis": { "type": "string" },
+    "gold_safety_status": { "type": "string", "enum": ["Approved", "Rejected"] },
+    "gold_drug_classes": { "type": "array", "items": { "type": "string" } },
+    "data_provenance": { "type": "string" },
+    "split": { "type": "string", "enum": ["train", "validation", "test"] },
+    "pipeline_version": { "type": "string" }
+  }
+}

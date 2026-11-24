@@ -1,0 +1,97 @@
+{
+  "status": "EVALUATED",
+  "dataset_source": "synthetic_protocol_smoke",
+  "metrics_are_icbhi": false,
+  "checkpoint": "C:\\Users\\Aishani\\Downloads\\swasthAi\\ml\\respiratory\\checkpoints\\best_respllm.pt",
+  "holdout_cycles": 20,
+  "device": "cpu",
+  "accuracy": 1.0,
+  "macro_precision": 1.0,
+  "macro_recall": 1.0,
+  "macro_sensitivity": 1.0,
+  "macro_specificity": 1.0,
+  "macro_f1": 1.0,
+  "support": 20,
+  "confusion_matrix": [
+    [
+      10,
+      0,
+      0,
+      0
+    ],
+    [
+      0,
+      4,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      4,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      2
+    ]
+  ],
+  "class_names": [
+    "normal",
+    "crackle",
+    "wheeze",
+    "both"
+  ],
+  "per_class": {
+    "normal": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "f1": 1.0,
+      "support": 10,
+      "tp": 10,
+      "fp": 0,
+      "fn": 0,
+      "tn": 10
+    },
+    "crackle": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "f1": 1.0,
+      "support": 4,
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "tn": 16
+    },
+    "wheeze": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "f1": 1.0,
+      "support": 4,
+      "tp": 4,
+      "fp": 0,
+      "fn": 0,
+      "tn": 16
+    },
+    "both": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "sensitivity": 1.0,
+      "specificity": 1.0,
+      "f1": 1.0,
+      "support": 2,
+      "tp": 2,
+      "fp": 0,
+      "fn": 0,
+      "tn": 18
+    }
+  }
+}

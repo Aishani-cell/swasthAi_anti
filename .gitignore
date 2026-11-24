@@ -1,0 +1,139 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+.venv/
+env/
+venv/
+ENV/
+
+# Environment Variables & Secrets
+.env
+.env.local
+*.pem
+*.key
+*.cert
+credentials.json
+secrets/
+
+# Large Model Weights & Checkpoints
+models/weights/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.gguf
+ml/respiratory/checkpoints/
+
+# Raw Patient & Clinical Datasets (Strict Privacy)
+data/raw/
+data/patients_phi/
+data/external/icbhi/
+*.dcm
+*.dicom
+*.wav
+*.mp3
+*.flac
+
+# Local Databases & Vector Stores
+*.db
+*.sqlite
+*.sqlite3
+chroma_db/
+vector_store/
+instance/
+
+# IDE & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Test & Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+reports/coverage/
+
+# Logs
+logs/
+*.log
+
+# Additional ML and experiment artifacts
+*.joblib
+*.pkl
+*.h5
+*.keras
+*.safetensors.index.json
+
+# Generated datasets and temporary files
+data/processed/
+datasets/raw/
+datasets/external/
+temp/
+tmp/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Generated evaluation outputs
+reports/generated/
+evaluation_results/
+*.csv.tmp
+
+# Frontend dependencies (if applicable)
+node_modules/
+.next/
+dist/
+
+# Environment variants
+.env.*
+!.env.example
+
+# SwasthAI uploaded medical documents and scans
+data/uploads/
+
+# Generated temporary clinical data
+data/generated/
+
+# Local audit artifacts
+.audit/
+
+# Respiratory evaluation audio
+reports/respiratory/*.wav
+
+# Local Python package cache
+torch/__pycache__/
+# Local fake PyTorch compatibility stub
+/torch/
+# SwasthAI local uploads and generated clinical records
+data/uploads/
+data/generated/
+
+# Local audit files
+.audit/
+
+# Local fake PyTorch stub (not the real PyTorch package)
+/torch/

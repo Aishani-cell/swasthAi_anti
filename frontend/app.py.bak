@@ -1,0 +1,801 @@
+"""
+SwasthAI Clinical Decision Support System — Patient Health Portal
+================================================================
+Patient-Facing Clinical Interface for Satnavari Smart Village Healthpod.
+Replicates the clinical encounter reference design with:
+- Narrow Left Sidebar for Patient Access & Demographics
+- Prominent Dark Teal Header Banner with Gold Accent
+- Two-Column Encounter Form:
+    * Left Panel: Healthpod Vitals with Dynamic BMI & Summary Pills
+    * Right Panel: Diagnostic Scan Upload, Lung Sound Recording, and Lab Report Upload
+- Two Lab Data Entry Methods:
+    1. Automated Extraction from Uploaded Reports (PDF/Image) with Review & Edit Table
+    2. Manual Laboratory Data Entry (Add/Remove Rows, Custom & Suggested Tests)
+- Full Encounter Submission to SwasthAI Multimodal Pipeline & Relational SQLite DB
+"""
+
+import sys
+import os
+import uuid
+import json
+import math
+from pathlib import Path
+from datetime import datetime
+
+# ---------------------------------------------------------------------------
+# Path setup
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+# ---------------------------------------------------------------------------
+# Streamlit & PyArrow compatibility hook
+# ---------------------------------------------------------------------------
+try:
+    import pyarrow.lib  # noqa: F401
+except Exception:
+    import streamlit.elements.arrow as _arrow
+    import pandas as _pd
+
+    def _safe_df_display(self, data=None, *args, **kwargs):
+        if data is not None:
+            if isinstance(data, _pd.DataFrame):
+                hide_index = kwargs.get("hide_index", False)
+                cols = list(data.columns)
+                header = "| " + " | ".join(str(c) for c in cols) + " |"
+                sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+                rows = ["| " + " | ".join(str(row[c]) for c in cols) + " |" for _, row in data.iterrows()]
+                return self.dg.markdown("\n".join([header, sep] + rows))
+            return self.dg.write(data)
+        return self.dg
+
+    _arrow.ArrowMixin.dataframe = _safe_df_display
+    import streamlit as _st
+    _st.dataframe = _safe_df_display.__get__(_st._main)
+
+import streamlit as st
+import pandas as pd
+from backend.app.db.session import init_db, get_db_connection
+from backend.app.core.privacy import hash_identifier
+from backend.app.services.pipeline import pipeline
+from backend.app.ehr.patient_service import patient_ehr_service
+from backend.app.agents.vision_agent.service import vision_agent_service
+from backend.app.services.document_extractor import extract_text_from_file, extract_and_structure_labs
+
+# Ensure database tables & demo patient are ready
+init_db()
+
+# ---------------------------------------------------------------------------
+# Streamlit Page Configuration
+# ---------------------------------------------------------------------------
+st.set_page_config(
+    page_title="SwasthAI – Satnavari Healthpod",
+    page_icon="🏥",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# ---------------------------------------------------------------------------
+# Authentication Guard: Patient-Only Access
+# ---------------------------------------------------------------------------
+if "patient_user" not in st.session_state or st.session_state["patient_user"] is None:
+    # Auto-login to seeded demo patient for immediate seamless demonstration
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, pseudonym_id, full_name, phone_number, email, dob, age, sex, is_pregnant FROM patients WHERE phone_number = '9876543210';")
+        demo_row = cursor.fetchone()
+        if demo_row:
+            st.session_state["patient_user"] = {
+                "patient_id": demo_row["id"],
+                "id": demo_row["id"],
+                "pseudonym_id": demo_row["pseudonym_id"],
+                "full_name": demo_row["full_name"],
+                "phone_number": demo_row["phone_number"],
+                "email": demo_row["email"] or "aarav.patel@satnavari.in",
+                "dob": demo_row["dob"] or "1994-06-15",
+                "age": demo_row["age"] or 30,
+                "sex": demo_row["sex"] or "MALE",
+                "is_pregnant": bool(demo_row["is_pregnant"]),
+                "role": "patient"
+            }
+            st.session_state["user"] = st.session_state["patient_user"]
+            st.session_state["selected_patient_id"] = demo_row["id"]
+        else:
+            st.warning("Please sign in to access your Patient Portal.")
+            if st.button("Proceed to Patient Login", type="primary"):
+                st.switch_page("pages/01_Login.py")
+            st.stop()
+
+patient = st.session_state["patient_user"]
+
+# Initialize session state for encounter data & uploads
+if "manual_labs" not in st.session_state:
+    st.session_state["manual_labs"] = [
+        {"test_name": "Hemoglobin", "value": 13.5, "unit": "g/dL", "reference_interval": "12.0 - 16.0", "status": "Normal", "source": "Manual Entry", "verified": True},
+        {"test_name": "Platelets", "value": 240000, "unit": "/uL", "reference_interval": "150000 - 450000", "status": "Normal", "source": "Manual Entry", "verified": True}
+    ]
+
+if "extracted_labs" not in st.session_state:
+    st.session_state["extracted_labs"] = []
+
+if "uploaded_scan_info" not in st.session_state:
+    st.session_state["uploaded_scan_info"] = None
+
+if "uploaded_audio_info" not in st.session_state:
+    st.session_state["uploaded_audio_info"] = None
+
+if "uploaded_doc_info" not in st.session_state:
+    st.session_state["uploaded_doc_info"] = None
+
+if "last_encounter_result" not in st.session_state:
+    st.session_state["last_encounter_result"] = None
+
+# Ensure temp upload directory exists
+UPLOAD_DIR = Path(_PROJECT_ROOT) / "data" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# ---------------------------------------------------------------------------
+# Custom CSS: Replicating Reference Design
+# ---------------------------------------------------------------------------
+st.markdown(
+    """
+    <style>
+    /* Global Background & Typography */
+    .stApp {
+        background-color: #f8fafc;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    
+    /* Left Sidebar: Patient Access Styling */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+        border-right: 1px solid #e2e8f0;
+        width: 250px !important;
+    }
+    .sidebar-brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-bottom: 12px;
+        border-bottom: 2px solid #0d6e6e;
+        margin-bottom: 16px;
+    }
+    .sidebar-brand h3 {
+        margin: 0;
+        font-size: 16px;
+        color: #0d6e6e !important;
+        font-weight: 700;
+    }
+    .patient-info-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #64748b;
+        font-weight: 600;
+        margin-top: 10px;
+        margin-bottom: 2px;
+    }
+    .patient-info-value {
+        font-size: 13px;
+        color: #1e293b;
+        font-weight: 500;
+        padding: 4px 8px;
+        background: #f1f5f9;
+        border-radius: 4px;
+        border: 1px solid #e2e8f0;
+        word-break: break-all;
+    }
+    
+    /* Main Top Banner: Dark Teal with Gold Accent */
+    .top-banner {
+        background: linear-gradient(135deg, #094b4d 0%, #0d6e6e 100%);
+        border-bottom: 3px solid #d4af37;
+        border-radius: 8px;
+        padding: 16px 24px;
+        color: #ffffff;
+        margin-bottom: 20px;
+        box-shadow: 0 4px 12px rgba(13, 110, 110, 0.15);
+    }
+    .top-banner h1 {
+        margin: 0;
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.3px;
+        color: #ffffff !important;
+    }
+    .top-banner p {
+        margin: 4px 0 0 0;
+        font-size: 13px;
+        color: #e0f2f1 !important;
+        opacity: 0.95;
+    }
+    
+    /* Form Header */
+    .form-title-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 16px;
+    }
+    .form-title-bar h2 {
+        margin: 0;
+        font-size: 17px;
+        font-weight: 700;
+        color: #0f172a !important;
+    }
+
+    /* Panels Styling */
+    .form-panel {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        margin-bottom: 16px;
+    }
+    .panel-header {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0d6e6e;
+        border-bottom: 1px solid #e2e8f0;
+        padding-bottom: 8px;
+        margin-bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    
+    /* Vitals Summary Pill */
+    .vital-pill {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        margin-right: 4px;
+        margin-bottom: 4px;
+    }
+    .vital-pill-normal {
+        background: #ecfdf5;
+        color: #065f46;
+        border: 1px solid #a7f3d0;
+    }
+    .vital-pill-warning {
+        background: #fffbeb;
+        color: #92400e;
+        border: 1px solid #fde68a;
+    }
+    .vital-pill-danger {
+        background: #fef2f2;
+        color: #991b1b;
+        border: 1px solid #fecaca;
+    }
+    
+    /* Upload Box Styling */
+    .upload-section {
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 14px;
+    }
+    .upload-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .upload-desc {
+        font-size: 11px;
+        color: #64748b;
+        margin-bottom: 8px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# ---------------------------------------------------------------------------
+# SIDEBAR: Patient Access
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="sidebar-brand">
+            <span style="font-size:24px;">🏥</span>
+            <div>
+                <h3>SwasthAI</h3>
+                <span style="font-size:11px;color:#64748b;font-weight:600;">Patient Access</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown('<div class="patient-info-label">Patient Name</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="patient-info-value">👤 {patient.get("full_name", "Patient")}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="patient-info-label">Patient ID (Pseudonym)</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="patient-info-value">🆔 {patient.get("pseudonym_id", "N/A")}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="patient-info-label">Mobile Number</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="patient-info-value">📞 {patient.get("phone_number", "N/A")}</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="patient-info-label">Date of Birth / Age</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="patient-info-value">📅 {patient.get("dob", "N/A")} ({patient.get("age", 25)} yrs)</div>', unsafe_allow_html=True)
+
+    st.markdown('<div class="patient-info-label">Gender</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="patient-info-value">⚧ {patient.get("sex", "UNKNOWN")}</div>', unsafe_allow_html=True)
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+    if st.button("🚪 Logout", use_container_width=True):
+        st.session_state["patient_user"] = None
+        st.session_state["user"] = None
+        st.session_state["selected_patient_id"] = None
+        st.switch_page("pages/01_Login.py")
+
+# ---------------------------------------------------------------------------
+# MAIN CONTENT AREA
+# ---------------------------------------------------------------------------
+
+# Top Banner
+st.markdown(
+    """
+    <div class="top-banner">
+        <h1>SwasthAI – Satnavri Healthpod AI Assistant</h1>
+        <p>AI-assisted clinical decision support for the Satnavri Smart Village Healthpod</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Encounter Form Title
+pat_name = patient.get("full_name") or patient.get("pseudonym_id")
+pat_age = patient.get("age", 30)
+st.markdown(
+    f"""
+    <div class="form-title-bar">
+        <span style="font-size:20px;">📋</span>
+        <h2>New Encounter Form for {pat_name} (Age: {pat_age})</h2>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Two-Column Layout (Left: Vitals | Right: Diagnostics & Labs)
+col_vitals, col_diagnostics = st.columns([1, 1], gap="medium")
+
+# ---------------------------------------------------------------------------
+# LEFT PANEL: Healthpod Vitals Form
+# ---------------------------------------------------------------------------
+with col_vitals:
+    st.markdown(
+        """
+        <div class="panel-header">
+            <span>🩺</span> Healthpod Vitals
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # Vitals Inputs with plus/minus increment step controls
+    v_col1, v_col2 = st.columns(2)
+    with v_col1:
+        systolic = st.number_input("Systolic BP (mmHg)", min_value=60, max_value=260, value=120, step=1, key="v_sbp")
+        pulse = st.number_input("Pulse Rate (BPM)", min_value=30, max_value=220, value=75, step=1, key="v_pulse")
+        spo2 = st.number_input("SpO2 (%)", min_value=50, max_value=100, value=98, step=1, key="v_spo2")
+        height_cm = st.number_input("Height (cm)", min_value=50, max_value=250, value=170, step=1, key="v_ht")
+
+    with v_col2:
+        diastolic = st.number_input("Diastolic BP (mmHg)", min_value=40, max_value=160, value=80, step=1, key="v_dbp")
+        temp_f = st.number_input("Temperature (°F)", min_value=90.0, max_value=110.0, value=98.6, step=0.1, format="%.1f", key="v_temp")
+        weight_kg = st.number_input("Weight (kg)", min_value=10.0, max_value=250.0, value=68.0, step=0.5, format="%.1f", key="v_wt")
+        is_pregnant_input = st.checkbox("Patient is Currently Pregnant", value=bool(patient.get("is_pregnant", False)), key="v_preg")
+
+    # Dynamic BMI Calculation
+    bmi = 0.0
+    bmi_category = "Normal"
+    if height_cm > 0 and weight_kg > 0:
+        ht_m = height_cm / 100.0
+        bmi = round(weight_kg / (ht_m * ht_m), 1)
+        if bmi < 18.5:
+            bmi_category = "Underweight"
+        elif bmi < 25.0:
+            bmi_category = "Normal"
+        elif bmi < 30.0:
+            bmi_category = "Overweight"
+        else:
+            bmi_category = "Obese"
+
+    # Symptoms Description input
+    symptoms_text = st.text_area(
+        "Reported Symptoms & Clinical Notes",
+        placeholder="e.g. Mild dry cough and slight fever for 3 days. Occasional wheezing at night.",
+        height=80,
+        key="v_syms"
+    )
+
+    # Compact Status Summary with Color-Coded Pills
+    st.markdown("<p style='font-size:12px; font-weight:700; color:#475569; margin:10px 0 6px 0;'>Vitals Summary & Clinical Alerts:</p>", unsafe_allow_html=True)
+    
+    # BP Status
+    bp_pill = "vital-pill-normal"
+    bp_status = "BP Normal"
+    if systolic >= 180 or diastolic >= 120:
+        bp_pill = "vital-pill-danger"
+        bp_status = f"Hypertensive Crisis ({systolic}/{diastolic})"
+    elif systolic >= 140 or diastolic >= 90:
+        bp_pill = "vital-pill-warning"
+        bp_status = f"Hypertension ({systolic}/{diastolic})"
+    elif systolic < 90 or diastolic < 60:
+        bp_pill = "vital-pill-warning"
+        bp_status = f"Hypotension ({systolic}/{diastolic})"
+
+    # SpO2 Status
+    spo2_pill = "vital-pill-normal"
+    spo2_status = f"SpO2: {spo2}%"
+    if spo2 < 90:
+        spo2_pill = "vital-pill-danger"
+        spo2_status = f"Critical Hypoxemia ({spo2}%)"
+    elif spo2 < 94:
+        spo2_pill = "vital-pill-warning"
+        spo2_status = f"Low SpO2 ({spo2}%)"
+
+    # Temp Status
+    temp_pill = "vital-pill-normal"
+    temp_status = f"Temp: {temp_f}°F"
+    if temp_f >= 102.0:
+        temp_pill = "vital-pill-danger"
+        temp_status = f"High Fever ({temp_f}°F)"
+    elif temp_f >= 99.5:
+        temp_pill = "vital-pill-warning"
+        temp_status = f"Mild Fever ({temp_f}°F)"
+
+    # Pulse Status
+    pulse_pill = "vital-pill-normal"
+    pulse_status = f"Pulse: {pulse} BPM"
+    if pulse > 120 or pulse < 50:
+        pulse_pill = "vital-pill-warning"
+        pulse_status = f"Abnormal Pulse ({pulse} BPM)"
+
+    # BMI Pill
+    bmi_pill = "vital-pill-normal" if bmi_category == "Normal" else "vital-pill-warning"
+
+    st.markdown(
+        f"""
+        <div>
+            <span class="vital-pill {bp_pill}">● {bp_status}</span>
+            <span class="vital-pill {spo2_pill}">● {spo2_status}</span>
+            <span class="vital-pill {temp_pill}">● {temp_status}</span>
+            <span class="vital-pill {pulse_pill}">● {pulse_status}</span>
+            <span class="vital-pill {bmi_pill}">● BMI: {bmi} ({bmi_category})</span>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# RIGHT PANEL: Laboratory Diagnostics, Imaging & Lung Sounds
+# ---------------------------------------------------------------------------
+with col_diagnostics:
+    st.markdown(
+        """
+        <div class="panel-header">
+            <span>🔬</span> Laboratory Diagnostics, Imaging & Lung Sounds
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    # -----------------------------------------------------------------------
+    # Section A: Medical Imaging Upload
+    # -----------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="upload-title">🩻 Upload Diagnostic Scan</div>
+        <div class="upload-desc">Chest X-Ray / CT / Brain MRI / DICOM / PNG / JPG / PDF diagnostic reports</div>
+        """,
+        unsafe_allow_html=True
+    )
+    scan_file = st.file_uploader(
+        "Choose diagnostic scan file",
+        type=["png", "jpg", "jpeg", "dcm", "dicom", "pdf"],
+        key="scan_uploader",
+        label_visibility="collapsed"
+    )
+    if scan_file is not None:
+        save_path = UPLOAD_DIR / f"scan_{uuid.uuid4().hex[:8]}_{scan_file.name}"
+        with open(save_path, "wb") as f:
+            f.write(scan_file.getbuffer())
+        
+        # Run vision metadata inspection
+        meta = vision_agent_service.process_image(str(save_path))
+        st.session_state["uploaded_scan_info"] = {
+            "name": scan_file.name,
+            "size": len(scan_file.getbuffer()),
+            "path": str(save_path),
+            "findings": meta.get("findings", []),
+            "modality": meta.get("modality", "XR"),
+            "audit_flags": meta.get("audit_flags", [])
+        }
+        st.success(f"✅ Uploaded scan: **{scan_file.name}** ({round(len(scan_file.getbuffer()) / 1024, 1)} KB)")
+
+    # -----------------------------------------------------------------------
+    # Section B: Lung Sound / Respiratory Recording Upload
+    # -----------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="upload-title" style="margin-top:14px;">🫁 Upload Lung Sound / Cough / Breathing Recording</div>
+        <div class="upload-desc">Stethoscope or audio recordings (WAV / MP3) for automated acoustic pattern review</div>
+        """,
+        unsafe_allow_html=True
+    )
+    audio_file = st.file_uploader(
+        "Choose audio recording",
+        type=["wav", "mp3"],
+        key="audio_uploader",
+        label_visibility="collapsed"
+    )
+    if audio_file is not None:
+        save_audio = UPLOAD_DIR / f"audio_{uuid.uuid4().hex[:8]}_{audio_file.name}"
+        with open(save_audio, "wb") as f:
+            f.write(audio_file.getbuffer())
+        st.session_state["uploaded_audio_info"] = {
+            "name": audio_file.name,
+            "size": len(audio_file.getbuffer()),
+            "path": str(save_audio)
+        }
+        st.success(f"✅ Audio recorded: **{audio_file.name}**")
+        st.audio(audio_file)
+
+    # -----------------------------------------------------------------------
+    # Section C: Laboratory Reports / Prescriptions Upload & Extraction
+    # -----------------------------------------------------------------------
+    st.markdown(
+        """
+        <div class="upload-title" style="margin-top:14px;">📄 Upload Lab Reports / Prescriptions (PDF or Images)</div>
+        <div class="upload-desc">Upload CBC, Glucose, LFT, KFT or Prescription for automated OCR parameter extraction</div>
+        """,
+        unsafe_allow_html=True
+    )
+    doc_file = st.file_uploader(
+        "Choose lab report or prescription",
+        type=["pdf", "png", "jpg", "jpeg"],
+        key="doc_uploader",
+        label_visibility="collapsed"
+    )
+    if doc_file is not None:
+        save_doc = UPLOAD_DIR / f"doc_{uuid.uuid4().hex[:8]}_{doc_file.name}"
+        with open(save_doc, "wb") as f:
+            f.write(doc_file.getbuffer())
+        st.session_state["uploaded_doc_info"] = {
+            "name": doc_file.name,
+            "size": len(doc_file.getbuffer()),
+            "path": str(save_doc)
+        }
+        st.info(f"📁 Document ready: **{doc_file.name}** ({round(len(doc_file.getbuffer()) / 1024, 1)} KB)")
+        
+        btn_c1, btn_c2 = st.columns(2)
+        with btn_c1:
+            if st.button("🔍 Extract Lab Parameters from Document", key="btn_extract"):
+                with st.spinner("Extracting parameters and reference ranges..."):
+                    extracted = extract_and_structure_labs(str(save_doc))
+                    if extracted:
+                        st.session_state["extracted_labs"] = extracted
+                        st.success(f"Extracted {len(extracted)} laboratory parameters.")
+                    else:
+                        st.warning("No structured laboratory lines identified. You can review the raw text below or enter parameters manually.")
+        with btn_c2:
+            if st.button("Clear Uploaded Document", key="btn_clr_doc"):
+                st.session_state["uploaded_doc_info"] = None
+                st.session_state["extracted_labs"] = []
+                st.rerun()
+
+# ---------------------------------------------------------------------------
+# FULL-WIDTH SECTION: LAB REPORT DATA EXTRACTION (METHOD 1 & METHOD 2)
+# ---------------------------------------------------------------------------
+st.markdown("---")
+st.markdown("### 🧪 Laboratory Diagnostics Data Review")
+
+tab_extracted, tab_manual = st.tabs(["📑 Method 1: Extracted Document Results", "✍️ Method 2: Manual Laboratory Data Entry"])
+
+# Method 1: Extracted Results Review Table
+with tab_extracted:
+    if st.session_state["extracted_labs"]:
+        st.markdown("**Review Extracted Laboratory Tests** (Verify values against your original report before confirming):")
+        
+        df_ext = pd.DataFrame(st.session_state["extracted_labs"])
+        st.dataframe(df_ext[["test_name", "value", "unit", "reference_interval", "status", "confidence", "verified"]], use_container_width=True)
+
+        col_ex1, col_ex2, col_ex3 = st.columns([1, 1, 1])
+        with col_ex1:
+            if st.button("✅ Confirm Extracted Results", key="btn_confirm_ext", type="primary"):
+                # Merge confirmed extracted results into manual_labs list
+                for item in st.session_state["extracted_labs"]:
+                    item_copy = dict(item)
+                    item_copy["verified"] = True
+                    item_copy["source"] = "OCR Extracted & Confirmed"
+                    st.session_state["manual_labs"].append(item_copy)
+                st.session_state["extracted_labs"] = []
+                st.success("Confirmed extracted laboratory results added to encounter dataset!")
+                st.rerun()
+        with col_ex2:
+            if st.button("🔄 Reprocess Document", key="btn_reproc"):
+                if st.session_state.get("uploaded_doc_info"):
+                    extracted = extract_and_structure_labs(st.session_state["uploaded_doc_info"]["path"])
+                    st.session_state["extracted_labs"] = extracted
+                    st.rerun()
+        with col_ex3:
+            if st.button("❌ Discard Extracted Results", key="btn_discard_ext"):
+                st.session_state["extracted_labs"] = []
+                st.rerun()
+    else:
+        st.caption("No extracted laboratory document loaded. Upload a PDF or image in the panel above and click **Extract Lab Parameters**.")
+
+# Method 2: Manual Laboratory Data Entry
+with tab_manual:
+    st.markdown("**Manual Laboratory Parameters Entry Table**")
+    st.caption("Enter or adjust individual laboratory values, measurement units, and reference intervals.")
+
+    # Render current manual labs
+    if st.session_state["manual_labs"]:
+        df_man = pd.DataFrame(st.session_state["manual_labs"])
+        st.dataframe(df_man[["test_name", "value", "unit", "reference_interval", "status", "source"]], use_container_width=True)
+    else:
+        st.info("No laboratory tests entered yet.")
+
+    # Controls to add a new test row
+    with st.expander("➕ Add Laboratory Test Row", expanded=True):
+        m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns([2, 1.2, 1.2, 1.8, 1.2])
+        
+        # Test Name Suggestions
+        common_tests = [
+            "Hemoglobin", "RBC", "WBC", "Platelets", "Blood Glucose (Fasting)", "Blood Glucose (Random)",
+            "HbA1c", "Serum Creatinine", "Blood Urea", "ALT (SGPT)", "AST (SGOT)", "TSH", "T3", "T4",
+            "Serum Sodium", "Serum Potassium", "Serum Calcium", "Total Bilirubin", "Vitamin B12"
+        ]
+        
+        with m_col1:
+            new_test_name = st.selectbox("Test Name", common_tests + ["Custom Other..."], key="m_test_select")
+            if new_test_name == "Custom Other...":
+                new_test_name = st.text_input("Enter Custom Test Name", placeholder="e.g. D-Dimer", key="m_custom_name")
+        with m_col2:
+            new_test_val = st.number_input("Value", value=12.0, step=0.1, key="m_val")
+        with m_col3:
+            new_test_unit = st.text_input("Unit", value="g/dL", key="m_unit")
+        with m_col4:
+            new_test_ref = st.text_input("Normal Range", value="12.0 - 16.0", key="m_ref")
+        with m_col5:
+            new_test_status = st.selectbox("Status", ["Normal", "High", "Low"], key="m_status")
+
+        if st.button("Add Test to Encounter", key="btn_add_test", type="secondary"):
+            if new_test_name and new_test_name != "Custom Other...":
+                st.session_state["manual_labs"].append({
+                    "test_name": new_test_name,
+                    "value": new_test_val,
+                    "unit": new_test_unit,
+                    "reference_interval": new_test_ref,
+                    "status": new_test_status,
+                    "source": "Manual Entry",
+                    "verified": True
+                })
+                st.success(f"Added {new_test_name} to encounter.")
+                st.rerun()
+
+    # Clear button
+    if st.session_state["manual_labs"]:
+        if st.button("🗑️ Clear All Manual Tests", key="btn_clear_man"):
+            st.session_state["manual_labs"] = []
+            st.rerun()
+
+# ---------------------------------------------------------------------------
+# BOTTOM: ENCOUNTER SUBMISSION
+# ---------------------------------------------------------------------------
+st.markdown("---")
+sub_col1, sub_col2 = st.columns([2, 1])
+with sub_col1:
+    st.markdown("#### Ready to Submit Patient Encounter?")
+    st.caption("Submits vitals, confirmed laboratory parameters, diagnostic scans, and audio recordings to the SwasthAI clinical inference engine.")
+
+with sub_col2:
+    submit_clicked = st.button("🚀 Submit New Encounter", type="primary", use_container_width=True)
+
+if submit_clicked:
+    # 1. Validation
+    if systolic <= 0 or diastolic <= 0:
+        st.error("Please enter valid blood pressure measurements.")
+    else:
+        with st.spinner("Processing encounter through SwasthAI CDSS Pipeline..."):
+            # Construct structured vitals payload
+            temp_c = round((temp_f - 32.0) * (5.0 / 9.0), 1)
+            vitals_dict = {
+                "systolic_bp": float(systolic),
+                "diastolic_bp": float(diastolic),
+                "heart_rate": float(pulse),
+                "respiratory_rate": 18.0,
+                "temperature_c": temp_c,
+                "spo2": float(spo2),
+                "weight_kg": float(weight_kg),
+                "height_cm": float(height_cm),
+                "bmi": float(bmi)
+            }
+
+            # Gather confirmed labs
+            combined_labs = []
+            for item in st.session_state["manual_labs"]:
+                combined_labs.append({
+                    "analyte_name": item["test_name"],
+                    "value": item["value"],
+                    "unit": item["unit"],
+                    "reference_interval": item.get("reference_interval")
+                })
+
+            # Imaging references
+            imaging_text = None
+            if st.session_state.get("uploaded_scan_info"):
+                scan = st.session_state["uploaded_scan_info"]
+                imaging_text = f"Study: {scan['name']}, Modality: {scan['modality']}. Findings: {'; '.join(f.get('observation', '') for f in scan.get('findings', []))}"
+
+            # Audio references
+            audio_path = None
+            if st.session_state.get("uploaded_audio_info"):
+                audio_path = st.session_state["uploaded_audio_info"]["path"]
+
+            # Generate encounter ID
+            enc_id = f"enc-{uuid.uuid4().hex[:10]}"
+
+            # Execute pipeline
+            dossier = pipeline.execute_consultation_pipeline(
+                encounter_id=enc_id,
+                patient_info=patient,
+                symptom_text=symptoms_text or "Routine healthpod wellness checkup",
+                vitals_data=vitals_dict,
+                lab_items_raw=combined_labs,
+                imaging_report_text=imaging_text,
+                respiratory_file_path=audio_path,
+                patient_allergies=[]
+            )
+
+            # Persist in SQLite
+            patient_ehr_service.persist_full_encounter(dossier, patient_id=patient["patient_id"])
+            
+            # Record additional custom vitals (height, weight, bmi) in vitals table
+            with get_db_connection() as conn:
+                conn.execute(
+                    "UPDATE vitals SET weight_kg = ?, height_cm = ?, bmi = ? WHERE encounter_id = ?;",
+                    (float(weight_kg), float(height_cm), float(bmi), enc_id)
+                )
+                conn.commit()
+
+            st.session_state["last_encounter_result"] = {
+                "encounter_id": enc_id,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "primary_diagnosis": dossier["diagnosis"]["primary_diagnosis"],
+                "confidence": dossier["diagnosis"]["primary_confidence"],
+                "circuit_breaker_status": "REJECTED (HALTED)" if dossier["safety_assessment"]["circuit_breaker_halted"] else "APPROVED",
+                "recommended_drugs": dossier["drug_recommendation"].get("generic_drug_classes", [])
+            }
+
+            st.success(f"🎉 Encounter **{enc_id}** successfully created and saved for {pat_name}!")
+
+# Display Confirmation Box if Encounter Submitted
+if st.session_state.get("last_encounter_result"):
+    res = st.session_state["last_encounter_result"]
+    st.markdown(
+        f"""
+        <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:8px; padding:16px; margin-top:16px;">
+            <h4 style="margin:0 0 6px 0; color:#166534;">✅ Encounter Submission Confirmed</h4>
+            <p style="margin:0; font-size:13px; color:#14532d;">
+                <b>Encounter ID:</b> {res['encounter_id']} | <b>Submission Time:</b> {res['timestamp']}<br/>
+                <b>Clinical Safety Status:</b> {res['circuit_breaker_status']}<br/>
+                <b>AI Primary Hypothesis:</b> {res['primary_diagnosis']} (Confidence: {int(res['confidence']*100)}%)<br/>
+                <b>Recommended Generic Drug Classes:</b> {', '.join(res['recommended_drugs']) if res['recommended_drugs'] else 'None required'}
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )

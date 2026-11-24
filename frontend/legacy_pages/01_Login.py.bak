@@ -1,0 +1,251 @@
+"""
+SwasthAI — Patient Access Authentication
+=========================================
+Dedicated Patient-Only Sign-In & Registration Portal for Satnavari Healthpod.
+Provides phone/email credentials login, password visibility, registration,
+and session establishment with redirect directly to the new encounter portal.
+"""
+
+import sys
+import os
+from pathlib import Path
+import streamlit as st
+
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
+st.set_page_config(page_title="Patient Access · SwasthAI", page_icon="🏥", layout="centered")
+
+from backend.app.db.session import get_db_connection, init_db
+from backend.app.core.security import verify_password, hash_password
+from backend.app.core.privacy import hash_identifier
+import uuid
+
+# Ensure DB initialized with demo patient
+init_db()
+
+# Custom styles matching the clean clinical theme
+st.markdown(
+    """
+    <style>
+    .patient-auth-header {
+        background: linear-gradient(135deg, #094b4d 0%, #0d6e6e 100%);
+        border-bottom: 3px solid #d4af37;
+        padding: 24px 28px;
+        border-radius: 12px;
+        color: #ffffff;
+        margin-bottom: 24px;
+        text-align: center;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+    }
+    .patient-auth-header h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        color: #ffffff !important;
+        letter-spacing: -0.3px;
+    }
+    .patient-auth-header p {
+        margin: 6px 0 0 0;
+        font-size: 13px;
+        opacity: 0.9;
+        color: #e0f2f1;
+    }
+    .auth-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 24px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    </style>
+    <div class="patient-auth-header">
+        <h2>🏥 SwasthAI — Satnavari Healthpod</h2>
+        <p>Patient Access & Self-Service Clinical Portal</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+# Check if already logged in
+if "patient_user" in st.session_state and st.session_state["patient_user"] is not None:
+    p = st.session_state["patient_user"]
+    st.success(f"✅ Signed in as **{p['full_name']}** ({p['pseudonym_id']})")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("📋 Go to Encounter Form", use_container_width=True, type="primary"):
+            st.switch_page("app.py")
+    with col2:
+        if st.button("🚪 Sign Out", use_container_width=True):
+            st.session_state["patient_user"] = None
+            st.session_state["user"] = None
+            st.session_state["selected_patient_id"] = None
+            st.rerun()
+    st.stop()
+
+tab_login, tab_register, tab_forgot = st.tabs(["🔐 Patient Sign In", "📝 New Patient Registration", "❓ Forgot Password"])
+
+with tab_login:
+    st.markdown("#### Enter Registered Phone or Email")
+    st.caption("Sign in to submit vitals, upload diagnostic scans, respiratory recordings, and view your health records.")
+
+    with st.form("patient_login_form"):
+        identifier = st.text_input("Mobile Number or Email", placeholder="e.g. 9876543210 or aarav.patel@satnavari.in")
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        submitted = st.form_submit_button("Sign In to Patient Portal", use_container_width=True, type="primary")
+
+    if submitted:
+        if not identifier or not password:
+            st.error("Please enter both your mobile number / email and password.")
+        else:
+            ident_clean = identifier.strip()
+            p_hash = hash_identifier(ident_clean)
+            
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """SELECT id, pseudonym_id, full_name, phone_number, email, dob, hashed_password, age, sex, is_pregnant
+                       FROM patients
+                       WHERE phone_hash = ? OR phone_number = ? OR email = ?;""",
+                    (p_hash, ident_clean, ident_clean)
+                )
+                row = cursor.fetchone()
+
+            if row is None or not row["hashed_password"]:
+                st.error("❌ No registered patient found with these credentials.")
+            else:
+                if verify_password(password, row["hashed_password"]):
+                    pat_dict = {
+                        "patient_id": row["id"],
+                        "id": row["id"],
+                        "pseudonym_id": row["pseudonym_id"],
+                        "full_name": row["full_name"] or f"Patient {row['pseudonym_id']}",
+                        "phone_number": row["phone_number"] or ident_clean,
+                        "email": row["email"] or "",
+                        "dob": row["dob"] or "1994-06-15",
+                        "age": row["age"] or 30,
+                        "sex": row["sex"] or "MALE",
+                        "is_pregnant": bool(row["is_pregnant"]),
+                        "role": "patient"
+                    }
+                    st.session_state["patient_user"] = pat_dict
+                    st.session_state["user"] = pat_dict
+                    st.session_state["selected_patient_id"] = row["id"]
+                    st.success("✅ Authentication successful! Redirecting to your encounter portal...")
+                    st.switch_page("app.py")
+                else:
+                    st.error("❌ Incorrect password. Please try again or use Forgot Password.")
+
+    st.markdown("---")
+    st.caption("💡 **Quick Demo Patient Login**: Mobile: `9876543210` | Password: `Patient@2026`")
+
+with tab_register:
+    st.markdown("#### Patient Self-Registration")
+    st.caption("Create a new patient profile for Satnavari Healthpod.")
+
+    with st.form("patient_registration_form"):
+        col_r1, col_r2 = st.columns(2)
+        with col_r1:
+            reg_name = st.text_input("Full Name *", placeholder="e.g. Sunita Sharma")
+            reg_phone = st.text_input("Mobile Number (10 digits) *", placeholder="e.g. 9812345678")
+            reg_email = st.text_input("Email Address (Optional)", placeholder="sunita@example.com")
+        with col_r2:
+            reg_dob = st.date_input("Date of Birth", format="YYYY-MM-DD")
+            reg_sex = st.selectbox("Gender *", ["FEMALE", "MALE", "OTHER"])
+            reg_pregnant = st.checkbox("Currently Pregnant (if applicable)", value=False)
+
+        reg_pass1 = st.text_input("Create Password *", type="password", placeholder="At least 6 characters")
+        reg_pass2 = st.text_input("Confirm Password *", type="password", placeholder="Repeat your password")
+        
+        reg_submitted = st.form_submit_button("Register & Sign In", use_container_width=True, type="primary")
+
+    if reg_submitted:
+        if not reg_name.strip():
+            st.error("Full name is required.")
+        elif not reg_phone.strip() or len(reg_phone.strip()) < 10:
+            st.error("A valid 10-digit mobile number is required.")
+        elif len(reg_pass1) < 6:
+            st.error("Password must be at least 6 characters long.")
+        elif reg_pass1 != reg_pass2:
+            st.error("Passwords do not match.")
+        else:
+            phone_clean = reg_phone.strip()
+            p_hash = hash_identifier(phone_clean)
+            
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM patients WHERE phone_hash = ? OR phone_number = ?;", (p_hash, phone_clean))
+                if cursor.fetchone():
+                    st.error("❌ A patient account with this mobile number already exists. Please sign in.")
+                else:
+                    new_id = f"pat-{uuid.uuid4().hex[:10]}"
+                    pseudo = f"SATNAVARI-{uuid.uuid4().hex[:6].upper()}"
+                    hashed = hash_password(reg_pass1)
+                    from datetime import date
+                    calculated_age = date.today().year - reg_dob.year
+                    
+                    cursor.execute(
+                        """INSERT INTO patients (id, phone_hash, pseudonym_id, full_name, phone_number, email, dob, hashed_password, age, sex, is_pregnant)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);""",
+                        (
+                            new_id,
+                            p_hash,
+                            pseudo,
+                            reg_name.strip(),
+                            phone_clean,
+                            reg_email.strip() if reg_email else None,
+                            str(reg_dob),
+                            hashed,
+                            int(calculated_age),
+                            reg_sex,
+                            int(reg_pregnant)
+                        )
+                    )
+                    conn.commit()
+
+                    pat_dict = {
+                        "patient_id": new_id,
+                        "id": new_id,
+                        "pseudonym_id": pseudo,
+                        "full_name": reg_name.strip(),
+                        "phone_number": phone_clean,
+                        "email": reg_email.strip() if reg_email else "",
+                        "dob": str(reg_dob),
+                        "age": int(calculated_age),
+                        "sex": reg_sex,
+                        "is_pregnant": reg_pregnant,
+                        "role": "patient"
+                    }
+                    st.session_state["patient_user"] = pat_dict
+                    st.session_state["user"] = pat_dict
+                    st.session_state["selected_patient_id"] = new_id
+                    st.success("🎉 Account successfully registered! Redirecting to your encounter form...")
+                    st.switch_page("app.py")
+
+with tab_forgot:
+    st.markdown("#### Password Recovery")
+    st.caption("Reset your portal access password using your registered mobile number.")
+
+    with st.form("forgot_password_form"):
+        f_phone = st.text_input("Registered Mobile Number", placeholder="e.g. 9876543210")
+        f_newpass = st.text_input("New Password", type="password", placeholder="Enter new password (min 6 characters)")
+        f_submitted = st.form_submit_button("Reset Password", use_container_width=True)
+
+    if f_submitted:
+        if not f_phone or len(f_newpass) < 6:
+            st.error("Please provide your registered mobile number and a new password with at least 6 characters.")
+        else:
+            p_hash = hash_identifier(f_phone.strip())
+            with get_db_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT id FROM patients WHERE phone_hash = ? OR phone_number = ?;", (p_hash, f_phone.strip()))
+                row = cursor.fetchone()
+                if row is None:
+                    st.error("❌ No patient found with this mobile number.")
+                else:
+                    new_hashed = hash_password(f_newpass)
+                    cursor.execute("UPDATE patients SET hashed_password = ? WHERE id = ?;", (new_hashed, row["id"]))
+                    conn.commit()
+                    st.success("✅ Password successfully updated! You can now sign in using your new password.")
